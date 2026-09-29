@@ -39,9 +39,14 @@ npm start
 The Worker synchronizes all registered Indexed Attributes with Dex before it
 opens its listener; no backend CLI registration is required.
 
-The examples share namespace-level slots by index type: `CustomKeyword`,
-`CustomText`, `CustomInt`, and numbered later slots such as `CustomKeyword2`.
+The examples share namespace-level slots by index type: `keyword1`,
+`text1`, `int1`, and numbered later slots such as `keyword2`.
 Use a fresh local store and a new port after changing an example's index schema.
+
+Application searches must constrain `FlowType` and parenthesize caller filters.
+The sample search endpoints enforce their Flow type. Dex Server excludes
+ContinuedAsNew runs by default; explicit history searches can opt in with
+`includeContinuedAsNew=true` through a supporting SDK or the Web search API.
 
 Use Node.js 22 or 24. Defaults connect to Dex at `localhost:8801`. Override with
 `DEX_FLOW_SERVICE_ADDRESS`, `DEX_WORKER_BIND_ADDRESS`, `DEX_WORKER_TARGET`,

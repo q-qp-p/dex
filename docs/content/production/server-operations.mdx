@@ -229,6 +229,10 @@ positive. Stream capacity remains part of each registered Stream definition.
 The remaining Stream Store settings control approximate charging, trim
 watermarks, trim batches, leases, and worker concurrency.
 
+## Application Search Attribute slots
+
+Application searches that reuse generic slots must constrain **FlowType** and parenthesize caller filters. Dex Server excludes ContinuedAsNew runs by default. Set **includeContinuedAsNew** to true for an intentional history search; keep the query and option unchanged across pages.
+
 ## Custom Attribute Store
 
 Use a Custom Attribute Store when a relational projection supports operational

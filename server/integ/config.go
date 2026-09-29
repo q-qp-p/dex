@@ -20,12 +20,13 @@ import (
 	"go.temporal.io/sdk/client"
 )
 
-const testNamespace = "default"
+var testNamespace = "default"
 
 // Api.Port / fixed worker ports are unused: startWorker and startDexService bind 127.0.0.1:0.
 
 type DexServiceTestConfig struct {
 	BackendType                            service.BackendType
+	CadenceDomain                          string
 	MemoEncryption                         bool
 	DefaultHeaders                         map[string]string
 	S3TestThreshold                        int
