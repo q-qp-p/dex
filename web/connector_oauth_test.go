@@ -34,6 +34,19 @@ func TestConnectorOAuthCredentialDerivationRejectsNonHTTPSEndpoint(t *testing.T)
 	}
 }
 
+func TestConnectorOAuthRedirectURIUsesTrustedPublicOriginAndBasePath(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "http://dex.internal/api/v2/oauth/start", nil)
+	request = request.WithContext(context.WithValue(request.Context(), webRequestConfigContextKey{}, webRequestConfig{
+		basePath: "/dex/projects/p1/environments/staging/releases/r1", publicOrigin: "https://studio.test.dexai.dev",
+	}))
+
+	redirectURI := connectorOAuthRedirectURI(request)
+
+	if redirectURI != "https://studio.test.dexai.dev/dex/projects/p1/environments/staging/releases/r1/api/v2/connector-oauth/callback" {
+		t.Fatalf("redirect URI = %q", redirectURI)
+	}
+}
+
 func TestConnectorOAuthRejectsHostSuppliedDerivedCredential(t *testing.T) {
 	manifest := connectorReleaseManifest{}
 	manifest.Spec.Auth.Fields = []connectorManifestField{{Name: "primary_email", Type: "string", Required: true}}
@@ -46,6 +59,20 @@ func TestConnectorOAuthRejectsHostSuppliedDerivedCredential(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "not a host-supplied non-secret field") {
 		t.Fatalf("validate derived credential error = %v", err)
+	}
+}
+
+func TestConnectorOAuthClientSecretRequirementFollowsManifestField(t *testing.T) {
+	authMethod := connectorManifestAuthMethod{
+		OAuth2: &connectorManifestOAuth2{ClientSecretCredential: "oauth_client_secret"},
+		Fields: []connectorManifestField{{Name: "oauth_client_secret", Required: false}},
+	}
+	if connectorOAuthClientSecretRequired(authMethod) {
+		t.Fatal("optional PKCE client secret was required")
+	}
+	authMethod.Fields[0].Required = true
+	if !connectorOAuthClientSecretRequired(authMethod) {
+		t.Fatal("required confidential client secret was optional")
 	}
 }
 
