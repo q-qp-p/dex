@@ -296,7 +296,8 @@ export class Client {
    * @returns Decoded output, or `undefined` for an output-free RPC.
    * @throws {@link RpcLockConflictError} when locks cannot be acquired.
    * @throws {@link WorkerInvocationError} when the application handler fails.
-   * @throws {@link FlowNotActiveError} when the selected path requires an active execution.
+   * @throws {@link FlowNotActiveOrNotFoundError} when the Flow is missing or the selected path
+   * cannot use its closed execution.
    */
   public async invokeRPC(
     rpcMethod: Function,
@@ -848,8 +849,8 @@ export class Client {
         }
         if (
           error instanceof DexServiceError
-          && error.code === status.DEADLINE_EXCEEDED
-          && requestBudget.hasExpired()
+          && (error.code === status.DEADLINE_EXCEEDED || error.code === status.CANCELLED)
+          && requestBudget.hasDeadline()
         ) {
           throw requestBudget.timeoutError("waitForStepCompletion", flowId);
         }
@@ -986,8 +987,8 @@ export class Client {
         }
         if (
           error instanceof DexServiceError
-          && error.code === status.DEADLINE_EXCEEDED
-          && requestBudget.hasExpired()
+          && (error.code === status.DEADLINE_EXCEEDED || error.code === status.CANCELLED)
+          && requestBudget.hasDeadline()
         ) {
           throw requestBudget.timeoutError("waitForAttributeMatch", flowId);
         }
@@ -1541,8 +1542,9 @@ class ClientRequestBudget {
     };
   }
 
-  public hasExpired(): boolean {
-    return this.deadlineMs !== undefined && performance.now() >= this.deadlineMs;
+  public hasDeadline(): boolean {
+    // Trust the transport's deadline expiry; its timer can precede the monotonic budget.
+    return this.deadlineMs !== undefined;
   }
 
   public timeoutError(operation: string, flowId: string): RequestTimeoutError {

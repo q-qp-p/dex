@@ -604,7 +604,7 @@ func resolveStartRequestID(override *string) (string, error) {
 //
 // options selects the stop mode and optional reason. The method returns after the
 // server accepts the request; it does not wait for the Flow to close. It returns
-// FlowNotActiveError when no active execution exists, plus validation, context,
+// FlowNotActiveOrNotFoundError when no active execution exists, plus validation, context,
 // transport, or server errors.
 func (client *Client) StopFlow(
 	ctx context.Context,
@@ -1343,8 +1343,8 @@ func (b *clientRequestBudget) context(parent context.Context) (context.Context, 
 	return requestCtx, cancelRequest, nil
 }
 
-func (b *clientRequestBudget) hasExpired() bool {
-	return !b.deadline.IsZero() && !time.Now().Before(b.deadline)
+func (b *clientRequestBudget) hasDeadline() bool {
+	return !b.deadline.IsZero()
 }
 
 func newRequestTimeoutError(operation string, flowID string) error {
@@ -1369,8 +1369,15 @@ func translateDurableWaitRPCError(
 	if contextErr := ctx.Err(); contextErr != nil {
 		return contextErr
 	}
-	if status.Code(err) == codes.DeadlineExceeded && requestBudget.hasExpired() {
-		return newRequestTimeoutError(op, flowID)
+	if status.Code(err) == codes.DeadlineExceeded {
+		// Transport deadlines can fire before the matching context timer.
+		contextDeadline, hasContextDeadline := ctx.Deadline()
+		if hasContextDeadline && (!requestBudget.hasDeadline() || !contextDeadline.After(requestBudget.deadline)) {
+			return context.DeadlineExceeded
+		}
+		if requestBudget.hasDeadline() {
+			return newRequestTimeoutError(op, flowID)
+		}
 	}
 	return translateRPCError(err, op, flowID, target)
 }
@@ -1386,8 +1393,8 @@ func translateWaitRPCError(
 		return contextErr
 	}
 	if status.Code(err) == codes.DeadlineExceeded {
-		deadline, hasDeadline := ctx.Deadline()
-		if hasDeadline && !time.Now().Before(deadline) {
+		_, hasDeadline := ctx.Deadline()
+		if hasDeadline {
 			return context.DeadlineExceeded
 		}
 	}
@@ -1415,7 +1422,8 @@ func isPrimitiveValue(value *dexpb.Value) bool {
 // A non-transactional RPC without Attribute locks starts from a backend query. If its
 // handler returns no durable effects, a retained terminal execution can serve the query.
 // Locks, transactional execution, returned effects, or server policy can require an
-// active execution and cause FlowNotActiveError for a terminal Flow.
+// active execution and cause FlowNotActiveOrNotFoundError for a terminal Flow. A missing
+// execution also returns FlowNotActiveOrNotFoundError, including on the query-only path.
 // InvokeRPC blocks until the handler returns, the timeout expires, or ctx is canceled,
 // then decodes the result into outputPtr when one is provided.
 // It may return validation, serialization, lock-conflict, worker, inactive-Flow,
