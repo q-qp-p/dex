@@ -10,6 +10,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -90,6 +91,8 @@ type V2ConnectorUIBinding struct {
 type V2StartDefinition struct {
 	StepType string             `json:"stepType"`
 	Input    V2StartInputSchema `json:"input"`
+	// SkipWaitFor is derived from the validated graph's Start Step phase and is never browser input.
+	SkipWaitFor bool `json:"-"`
 }
 
 // V2StartInputSchema describes one recursive JSON input value.
@@ -183,6 +186,7 @@ type v2Handler struct {
 	permissionMode                  string
 	isStartFlowWorkerTargetHeadless bool
 	checkStartFlowWorkerHealth      V2WorkerHealthChecker
+	trustStartFlowHeaders           bool
 }
 
 // V2DefinitionSnapshot is one request's immutable catalog revision.
@@ -202,6 +206,8 @@ type V2HandlerConfig struct {
 	PermissionMode                  string
 	IsStartFlowWorkerTargetHeadless bool
 	WorkerHealthChecker             V2WorkerHealthChecker
+	// TrustStartFlowHeaders defaults false; only authenticated private proxies may enable it.
+	TrustStartFlowHeaders bool
 }
 
 type v2CatalogEntry struct {
@@ -303,6 +309,7 @@ func RegisterDynamicV2Handlers(
 		client: client, loadDefinitions: loader, permissionMode: permissionMode,
 		isStartFlowWorkerTargetHeadless: config.IsStartFlowWorkerTargetHeadless,
 		checkStartFlowWorkerHealth:      config.WorkerHealthChecker,
+		trustStartFlowHeaders:           config.TrustStartFlowHeaders,
 	}
 	if handler.checkStartFlowWorkerHealth == nil {
 		handler.checkStartFlowWorkerHealth = checkV2WorkerPortHealth
@@ -310,6 +317,7 @@ func RegisterDynamicV2Handlers(
 	mux.HandleFunc("GET /api/v2/catalog", handler.catalog)
 	mux.HandleFunc("POST /api/v2/worker-health", handler.checkWorkerHealth)
 	mux.HandleFunc("POST /api/v2/start", handler.startFlow)
+	mux.HandleFunc("POST /api/v2/start/recover", handler.recoverStartFlow)
 	mux.HandleFunc("POST /api/v2/search", handler.search)
 	mux.HandleFunc("GET /api/v2/display", handler.display)
 	mux.HandleFunc("PATCH /api/v2/display", handler.editDisplay)
@@ -337,6 +345,7 @@ func (h *v2Handler) catalog(response http.ResponseWriter, request *http.Request)
 		"enabled":            len(entries) > 0,
 		"flows":              entries,
 		"definitionRevision": snapshot.Revision,
+		"startFlow":          h.startFlowCapability(request),
 	})
 }
 
@@ -502,6 +511,9 @@ func (h *v2Handler) display(response http.ResponseWriter, request *http.Request)
 }
 
 func (h *v2Handler) editDisplay(response http.ResponseWriter, request *http.Request) {
+	if !h.requireEmbeddedMutationCSRF(response, request) {
+		return
+	}
 	snapshot, ok := h.loadSnapshot(response, request, true)
 	if !ok {
 		return
@@ -615,6 +627,9 @@ func encodeActionPermissionConditionValue(value interface{}) (*dexpb.Value, erro
 }
 
 func (h *v2Handler) invokeAction(response http.ResponseWriter, request *http.Request) {
+	if !h.requireEmbeddedMutationCSRF(response, request) {
+		return
+	}
 	snapshot, ok := h.loadSnapshot(response, request, true)
 	if !ok {
 		return
@@ -678,6 +693,19 @@ func (h *v2Handler) invokeAction(response http.ResponseWriter, request *http.Req
 		return
 	}
 	writeJSON(response, http.StatusOK, map[string]bool{"invoked": true})
+}
+
+func (h *v2Handler) requireEmbeddedMutationCSRF(response http.ResponseWriter, request *http.Request) bool {
+	if h.permissionMode != V2PermissionModeTrustedHeader || request.Header.Get("X-Dex-Web-Embedded") != "true" {
+		return true
+	}
+	expected := request.Header.Values("X-Dex-Web-CSRF-Token")
+	supplied := request.Header.Values("X-CSRF-Token")
+	if len(expected) != 1 || expected[0] == "" || len(supplied) != 1 || subtle.ConstantTimeCompare([]byte(expected[0]), []byte(supplied[0])) != 1 {
+		WriteCodedError(response, http.StatusForbidden, "WEB_MUTATION_CSRF_INVALID", "Embedded mutation CSRF token is invalid")
+		return false
+	}
+	return true
 }
 
 func (h *v2Handler) loadSnapshot(
